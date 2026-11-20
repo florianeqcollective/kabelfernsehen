@@ -53,6 +53,11 @@
     position: fixed; right: 5vw; top: 16vh; padding: 2vh 2vw; border-radius: 1vh;
     background: rgba(10, 14, 24, .9); font-size: 2.2vh; line-height: 1.7; display: none;
   }
+  #diag {
+    position: fixed; left: 3vw; top: 3vh; width: 70vw; padding: 1.5vh 1.5vw; border-radius: 1vh;
+    background: rgba(10, 14, 24, .92); font: 2vh/1.5 Consolas, monospace; color: #ffb84d;
+    word-break: break-all; display: none;
+  }
   #help kbd { font-family: Consolas, monospace; color: #3dff5a; }
 </style>
 </head>
@@ -69,9 +74,10 @@
   <kbd>← →</kbd> Lautstärke · <kbd>M</kbd> stumm<br>
   <kbd>Rücktaste</kbd> letzter Sender<br>
   <kbd>F</kbd> / Doppelklick: Vollbild<br>
-  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe
+  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v3
   <div id="lastkey"></div>
 </div>
+<div id="diag"></div>
 
 <script src="hls.min.js"></script>
 <script>
@@ -109,7 +115,16 @@ const mem = {
   set(k, x) { try { localStorage.setItem("tv." + k, JSON.stringify(x)); } catch (e) {} },
 };
 
+const VERSION = "3";
 let cur = -1, prev = -1, hls = null, sel = 0, digits = "", digitTimer, osdTimer, idleTimer, retryTimer;
+
+// Wiedergabearten: "js" = Abspielbibliothek im Browser, "nativ" = eingebauter Player des Geräts.
+// Klappt eine Art nicht, wird von selbst die andere versucht; die funktionierende wird gemerkt.
+const MODES = [];
+if (window.Hls && Hls.isSupported()) MODES.push("js");
+MODES.push("nativ");
+const storedMode = () => { const m = mem.get("mode", MODES[0]); return MODES.indexOf(m) >= 0 ? m : MODES[0]; };
+let mode = storedMode(), savedMode = mem.get("mode", ""), tried = [], lastErr = "", gen = 0, watchdog;
 
 function setState(t) { bar.querySelector(".state").textContent = t; }
 
@@ -136,30 +151,82 @@ function tune(i, force) {
   if (i === cur && !force) { osd(); return; }
   if (i !== cur) { prev = cur; cur = i; }
   mem.set("sender", cur);
-  clearTimeout(retryTimer);
   setState("");
   osd();
   markList();
-  const url = SENDER[cur][1];
+  tried = []; lastErr = "";
+  $("diag").style.display = "none";
+  start();
+}
+
+function stop() {
+  gen++;
+  clearTimeout(retryTimer); clearTimeout(watchdog);
   if (hls) { hls.destroy(); hls = null; }
-  if (window.Hls && Hls.isSupported()) {
+  while (v.firstChild) v.removeChild(v.firstChild);
+  v.removeAttribute("src");
+}
+
+function start() {
+  stop();
+  const url = SENDER[cur][1], my = gen;
+  watchdog = setTimeout(() => { if (my === gen) fail("kein Bild nach 12 s"); }, 12000);
+  if (mode === "js") {
+    let recovered = false;
     hls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 20 });
     const mine = hls;
     hls.on(Hls.Events.MANIFEST_PARSED, play);
     hls.on(Hls.Events.ERROR, (_, d) => {
-      if (!d.fatal || hls !== mine) return;
-      if (d.type === Hls.ErrorTypes.MEDIA_ERROR) { mine.recoverMediaError(); return; }
-      setState("Kein Signal"); osd(8000);
-      retryTimer = setTimeout(() => tune(cur, true), 8000);   // von selbst neu versuchen
+      if (!d.fatal || my !== gen) return;
+      if (d.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) { recovered = true; mine.recoverMediaError(); return; }
+      fail(d.type + "/" + d.details);
     });
     hls.loadSource(url);
     hls.attachMedia(v);
   } else {
-    v.src = url;            // Geräte mit eingebautem HLS (z. B. manche TV-Browser)
-    v.onloadedmetadata = play;
-    v.onerror = () => { setState("Kein Signal"); osd(8000); };
+    const s = document.createElement("source");
+    s.src = url; s.type = "application/vnd.apple.mpegurl";
+    s.onerror = () => { if (my === gen) fail("Quelle abgelehnt"); };
+    v.onerror = () => { if (my === gen) fail("Videofehler " + (v.error ? v.error.code : "?")); };
+    v.appendChild(s);
+    v.load();
+    play();
   }
 }
+
+// Wiedergabe kam nicht zustande: andere Art versuchen, sonst Diagnose zeigen und später neu versuchen
+function fail(msg) {
+  lastErr = mode + ": " + msg + (lastErr ? " | " + lastErr : "");
+  tried.push(mode);
+  const next = MODES.filter(m => tried.indexOf(m) < 0)[0];
+  if (next) { mode = next; start(); return; }
+  const text = diag();
+  stop();
+  setState("Kein Bild"); osd(8000);
+  $("diag").textContent = text; $("diag").style.display = "block";
+  mode = storedMode();
+  retryTimer = setTimeout(() => tune(cur, true), 15000);
+}
+
+function diag() {
+  const c = x => v.canPlayType(x) || "nein";
+  return "Kabelfernsehen v" + VERSION + " · versucht: " + tried.join(", ") +
+    " · hls.js " + (window.Hls ? (Hls.isSupported() ? "ja" : "nein") : "fehlt") +
+    " · MSE " + (window.MediaSource ? "ja" : window.ManagedMediaSource ? "managed" : "nein") +
+    " · HLS nativ " + c("application/vnd.apple.mpegurl") +
+    " · DASH " + c("application/dash+xml") +
+    " · H.264 " + c('video/mp4; codecs="avc1.640028"') +
+    " · Bild " + v.videoWidth + "x" + v.videoHeight + " · Zustand " + v.readyState + " · Zeit " + v.currentTime.toFixed(1) +
+    " · Fehler: " + (lastErr || "-") + " · " + navigator.userAgent;
+}
+
+// Läuft wirklich ein Bild? Dann Überwachung beenden und die Wiedergabeart merken
+v.addEventListener("timeupdate", () => {
+  if (!(v.videoWidth > 0 && v.currentTime > 0)) return;
+  clearTimeout(watchdog);
+  $("diag").style.display = "none";
+  if (savedMode !== mode) { savedMode = mode; mem.set("mode", mode); }
+});
 
 // Senderliste
 function buildList() {
@@ -249,7 +316,7 @@ addEventListener("keydown", e => {
 // Schnittstelle für die Fire-TV-App
 window.tvAct = act;
 window.tvKey = name => { $("lastkey").textContent = "Letzte Taste: " + name; };
-window.tvStop = () => { clearTimeout(retryTimer); if (hls) { hls.destroy(); hls = null; } v.pause(); };
+window.tvStop = () => { stop(); v.pause(); };
 window.tvResume = () => { if (cur >= 0) tune(cur, true); };
 
 let wheelLock = 0;

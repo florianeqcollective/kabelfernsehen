@@ -76,7 +76,7 @@
   <kbd>← →</kbd> Lautstärke · <kbd>M</kbd> stumm<br>
   <kbd>Rücktaste</kbd> letzter Sender<br>
   <kbd>F</kbd> / Doppelklick: Vollbild<br>
-  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v7
+  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v8
   <div id="lastkey"></div>
 </div>
 <div id="diag"></div>
@@ -126,8 +126,8 @@ const mem = {
   set(k, x) { try { localStorage.setItem("tv." + k, JSON.stringify(x)); } catch (e) {} },
 };
 
-const VERSION = "7";
-// Fernseher und TV-Sticks: alles außer Rechner, Handy und Tablet. Dort wird das Bild auf 720p begrenzt
+const VERSION = "8";
+// Fernseher und TV-Sticks: alles außer Rechner, Handy und Tablet. Dort wird das Bild auf 720p und 4 Mbit/s begrenzt
 // (schwache Prozessoren), die Lautstärke regelt der Fernseher selbst, und es gibt eine Ton-Diagnose.
 const TV = !/Windows|Macintosh|iPhone|iPad|Mobile|CrOS/.test(navigator.userAgent);
 let cur = -1, prev = -1, hls = null, sel = 0, digits = "", digitTimer, osdTimer, idleTimer, retryTimer;
@@ -201,7 +201,7 @@ function start() {
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (TV) {
           let cap = -1;
-          mine.levels.forEach((l, i) => { if (l.height && l.height <= 720) cap = i; });
+          mine.levels.forEach((l, i) => { if (l.height && l.height <= 720 && l.bitrate <= 4000000) cap = i; });
           if (cap >= 0) mine.autoLevelCapping = cap;
         }
         play();

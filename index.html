@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kabelfernsehen</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; touch-action: none; }
   body { font-family: "Segoe UI", system-ui, sans-serif; color: #fff; user-select: none; }
   body.idle { cursor: none; }
   video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
@@ -36,7 +36,7 @@
     position: fixed; top: 0; bottom: 0; left: 0; width: min(32vw, 460px);
     background: rgba(10, 14, 24, .93); overflow-y: auto;
     transform: translateX(-100%); transition: transform .2s;
-    padding: 2vh 0; box-sizing: border-box; scrollbar-width: none;
+    padding: 2vh 0; box-sizing: border-box; scrollbar-width: none; touch-action: pan-y;
   }
   #list.open { transform: none; }
   #list div { padding: 1.3vh 1.6vw; font-size: 2.6vh; display: flex; gap: 1.2vw; cursor: pointer; }
@@ -63,7 +63,7 @@
 <div id="list"></div>
 <div id="hint">Taste drücken oder klicken<br>für Ton</div>
 <div id="help">
-  <kbd>↑ ↓</kbd> / Mausrad: Sender wechseln<br>
+  <kbd>↑ ↓</kbd> / Mausrad / Wischen: Sender wechseln<br>
   <kbd>0–9</kbd> Sender direkt wählen<br>
   <kbd>Enter</kbd> Senderliste<br>
   <kbd>← →</kbd> Lautstärke · <kbd>M</kbd> stumm<br>
@@ -267,6 +267,22 @@ addEventListener("mousemove", e => {
   idleTimer = setTimeout(() => document.body.classList.add("idle"), 2500);
   if (e.clientX < 8) toggleList(true);        // Maus an den linken Rand: Senderliste
 });
+
+// Wischen am Handy: hoch/runter zappt, nach rechts öffnet die Senderliste, nach links schließt sie
+let touch = null;
+addEventListener("touchstart", e => {
+  const t = e.touches[0];
+  touch = e.touches.length === 1 && !list.contains(e.target) ? { x: t.clientX, y: t.clientY } : null;
+}, { passive: true });
+addEventListener("touchend", e => {
+  if (!touch) return;
+  const t = e.changedTouches[0], dx = t.clientX - touch.x, dy = t.clientY - touch.y;
+  touch = null;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) < 50) return;      // nur getippt
+  unmuteOnce();
+  if (Math.abs(dy) > Math.abs(dx)) { if (!listOpen()) tune(cur + (dy < 0 ? 1 : -1)); }
+  else toggleList(dx > 0);
+}, { passive: true });
 
 // Start: letzter Sender, letzte Lautstärke
 buildList();

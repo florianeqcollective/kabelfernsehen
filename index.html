@@ -76,7 +76,7 @@
   <kbd>← →</kbd> Lautstärke · <kbd>M</kbd> stumm<br>
   <kbd>Rücktaste</kbd> letzter Sender<br>
   <kbd>F</kbd> / Doppelklick: Vollbild<br>
-  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v5
+  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v6
   <div id="lastkey"></div>
 </div>
 <div id="diag"></div>
@@ -126,7 +126,10 @@ const mem = {
   set(k, x) { try { localStorage.setItem("tv." + k, JSON.stringify(x)); } catch (e) {} },
 };
 
-const VERSION = "5";
+const VERSION = "6";
+// Fernseher und TV-Sticks: alles außer Rechner, Handy und Tablet. Dort wird das Bild auf 720p begrenzt
+// (schwache Prozessoren), die Lautstärke regelt der Fernseher selbst, und es gibt eine Ton-Diagnose.
+const TV = !/Windows|Macintosh|iPhone|iPad|Mobile|CrOS/.test(navigator.userAgent);
 let cur = -1, prev = -1, hls = null, sel = 0, digits = "", digitTimer, osdTimer, idleTimer, retryTimer;
 
 // Wiedergabearten: "js" = Abspielbibliothek im Browser, "nativ" und "direkt" = eingebauter Player des Geräts.
@@ -191,9 +194,17 @@ function start() {
   if (mode === "js") {
     let recovered = false;
     try {
-      hls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 20 });
+      hls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 20, capLevelOnFPSDrop: TV,
+        enableWebVTT: false, enableIMSC1: false, enableCEA708Captions: false });   // keine Untertitel
       const mine = hls;
-      hls.on(Hls.Events.MANIFEST_PARSED, play);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (TV) {
+          let cap = -1;
+          mine.levels.forEach((l, i) => { if (l.height && l.height <= 720) cap = i; });
+          if (cap >= 0) mine.autoLevelCapping = cap;
+        }
+        play();
+      });
       hls.on(Hls.Events.ERROR, (_, d) => {
         if (!d.fatal || my !== gen) return;
         if (d.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) { recovered = true; mine.recoverMediaError(); return; }
@@ -241,13 +252,48 @@ function diag() {
     " · Fehler: " + (lastErr || "-") + " · " + navigator.userAgent;
 }
 
+// Untertitel ausblenden, falls der Browser sie von sich aus einschaltet
+function hideSubs() {
+  try { for (let i = 0; i < v.textTracks.length; i++) if (v.textTracks[i].mode === "showing") v.textTracks[i].mode = "hidden"; } catch (e) {}
+}
+
+// Ton-Diagnose für Fernseher: zeigt 10 Sekunden nach Bildstart kurz an, ob Ton ankommt
+let tonTimer, tonGen = -1;
+function tonInfo() {
+  let s = "v" + VERSION + " · Ton: laut " + Math.round(v.volume * 100) + (v.muted ? " STUMM" : "") +
+    " · dekodiert " + (typeof v.webkitAudioDecodedByteCount === "number" ? v.webkitAudioDecodedByteCount : "?") +
+    " · Bild " + v.videoWidth + "x" + v.videoHeight;
+  try {
+    if (hls) {
+      const l = hls.levels[hls.currentLevel >= 0 ? hls.currentLevel : 0] || {};
+      s += " · Codecs " + (l.videoCodec || "?") + " / " + (l.audioCodec || "?") + " · Tonspuren " + hls.audioTracks.length +
+        " (aktiv " + hls.audioTrack + ") · Stufen " + hls.levels.length + " · Grenze " + hls.autoLevelCapping;
+    }
+  } catch (e) { s += " · " + e.message; }
+  try { s += " · Puffer " + v.buffered.length + " · ausgelassene Bilder " + (v.webkitDroppedFrameCount || 0); } catch (e) {}
+  return s + " · " + navigator.userAgent;
+}
+
 // Läuft wirklich ein Bild? Dann Überwachung beenden und die Wiedergabeart merken
 v.addEventListener("timeupdate", () => {
   if (!(v.videoWidth > 0 && v.currentTime > 0)) return;
+  hideSubs();
+  if (tonGen === gen) return;
+  tonGen = gen;
   clearTimeout(watchdog);
   $("diag").style.display = "none";
   if (bar.querySelector(".state").textContent.indexOf("lädt") === 0) setState("");
   if (savedMode !== mode) { savedMode = mode; mem.set("mode", mode); }
+  if (TV) {
+    v.muted = false; v.volume = 1;
+    clearTimeout(tonTimer);
+    const my = gen;
+    tonTimer = setTimeout(() => {
+      if (my !== gen) return;
+      $("diag").textContent = tonInfo(); $("diag").style.display = "block";
+      tonTimer = setTimeout(() => { if (my === gen) $("diag").style.display = "none"; }, 20000);
+    }, 10000);
+  }
 });
 
 // Senderliste
@@ -318,8 +364,8 @@ function act(a) {
   switch (a) {
     case "up": case "next": tune(cur + 1); break;
     case "down": case "prev": tune(cur - 1); break;
-    case "right": volume(+.05); break;
-    case "left": volume(-.05); break;
+    case "right": if (!TV) volume(+.05); break;
+    case "left": if (!TV) volume(-.05); break;
     case "ok": toggleList(true); break;
     case "back": if (help.style.display === "block") help.style.display = "none"; else if (prev >= 0) tune(prev); break;
     case "mute": v.muted = !v.muted; setState(v.muted ? "Stumm" : ""); osd(1500); break;
@@ -378,7 +424,7 @@ addEventListener("touchend", e => {
 
 // Start: letzter Sender, letzte Lautstärke
 buildList();
-v.volume = mem.get("vol", 1);
+v.volume = TV ? 1 : mem.get("vol", 1);
 tune(Math.min(mem.get("sender", 0), SENDER.length - 1));
 </script>
 </body>

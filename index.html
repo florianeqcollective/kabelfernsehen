@@ -76,7 +76,7 @@
   <kbd>← →</kbd> Lautstärke · <kbd>M</kbd> stumm<br>
   <kbd>Rücktaste</kbd> letzter Sender<br>
   <kbd>F</kbd> / Doppelklick: Vollbild<br>
-  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v6
+  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v7
   <div id="lastkey"></div>
 </div>
 <div id="diag"></div>
@@ -126,7 +126,7 @@ const mem = {
   set(k, x) { try { localStorage.setItem("tv." + k, JSON.stringify(x)); } catch (e) {} },
 };
 
-const VERSION = "6";
+const VERSION = "7";
 // Fernseher und TV-Sticks: alles außer Rechner, Handy und Tablet. Dort wird das Bild auf 720p begrenzt
 // (schwache Prozessoren), die Lautstärke regelt der Fernseher selbst, und es gibt eine Ton-Diagnose.
 const TV = !/Windows|Macintosh|iPhone|iPad|Mobile|CrOS/.test(navigator.userAgent);
@@ -138,7 +138,7 @@ const MODES = [];
 if (window.Hls && Hls.isSupported()) MODES.push("js");
 MODES.push("nativ", "direkt");
 const storedMode = () => { const m = mem.get("mode", MODES[0]); return MODES.indexOf(m) >= 0 ? m : MODES[0]; };
-let mode = storedMode(), savedMode = mem.get("mode", ""), tried = [], lastErr = "", gen = 0, watchdog;
+let mode = storedMode(), savedMode = mem.get("mode", ""), tried = [], lastErr = "", gen = 0, watchdog, notes = {};
 
 function setState(t) { bar.querySelector(".state").textContent = t; }
 
@@ -191,6 +191,7 @@ function start() {
   const url = SENDER[cur][1], my = gen;
   watchdog = setTimeout(() => { if (my === gen) fail("kein Bild nach 12 s"); }, 12000);
   setState("lädt (" + mode + ") · v" + VERSION); osd(13000);
+  notes = {};
   if (mode === "js") {
     let recovered = false;
     try {
@@ -206,7 +207,9 @@ function start() {
         play();
       });
       hls.on(Hls.Events.ERROR, (_, d) => {
-        if (!d.fatal || my !== gen) return;
+        if (my !== gen) return;
+        notes[d.details] = (notes[d.details] || 0) + 1;      // auch harmlose Meldungen für die Diagnose zählen
+        if (!d.fatal) return;
         if (d.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) { recovered = true; mine.recoverMediaError(); return; }
         fail(d.type + "/" + d.details);
       });
@@ -260,7 +263,8 @@ function hideSubs() {
 // Ton-Diagnose für Fernseher: zeigt 10 Sekunden nach Bildstart kurz an, ob Ton ankommt
 let tonTimer, tonGen = -1;
 function tonInfo() {
-  let s = "v" + VERSION + " · Ton: laut " + Math.round(v.volume * 100) + (v.muted ? " STUMM" : "") +
+  let s = "v" + VERSION + " · Art " + mode + " · HLS nativ " + (v.canPlayType("application/vnd.apple.mpegurl") || "nein") +
+    " · Meldungen " + (JSON.stringify(notes) || "-") + " · Ton: laut " + Math.round(v.volume * 100) + (v.muted ? " STUMM" : "") +
     " · dekodiert " + (typeof v.webkitAudioDecodedByteCount === "number" ? v.webkitAudioDecodedByteCount : "?") +
     " · Bild " + v.videoWidth + "x" + v.videoHeight;
   try {
@@ -295,6 +299,14 @@ v.addEventListener("timeupdate", () => {
     }, 10000);
   }
 });
+
+// Wiedergabeart von Hand wechseln (am Fernseher: Pfeil rechts/links)
+function switchMode(step) {
+  mode = MODES[(MODES.indexOf(mode) + step + MODES.length) % MODES.length];
+  tried = []; lastErr = "";
+  $("diag").style.display = "none";
+  start();
+}
 
 // Senderliste
 function buildList() {
@@ -364,8 +376,8 @@ function act(a) {
   switch (a) {
     case "up": case "next": tune(cur + 1); break;
     case "down": case "prev": tune(cur - 1); break;
-    case "right": if (!TV) volume(+.05); break;
-    case "left": if (!TV) volume(-.05); break;
+    case "right": if (TV) switchMode(1); else volume(+.05); break;
+    case "left": if (TV) switchMode(-1); else volume(-.05); break;
     case "ok": toggleList(true); break;
     case "back": if (help.style.display === "block") help.style.display = "none"; else if (prev >= 0) tune(prev); break;
     case "mute": v.muted = !v.muted; setState(v.muted ? "Stumm" : ""); osd(1500); break;

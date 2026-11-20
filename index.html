@@ -8,7 +8,7 @@
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; touch-action: none; }
   body { font-family: "Segoe UI", system-ui, sans-serif; color: #fff; user-select: none; }
   body.idle { cursor: none; }
-  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  video { position: fixed; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
 
   /* Senderanzeige oben rechts, wie am Röhrenfernseher */
   #num {
@@ -20,11 +20,13 @@
   /* Infobalken unten */
   #bar {
     position: fixed; left: 5vw; right: 5vw; bottom: 6vh;
-    display: flex; align-items: baseline; gap: 2vw;
+    display: flex; align-items: baseline;
     padding: 2vh 2.5vw; border-radius: 1vh;
     background: rgba(10, 14, 24, .82);
     opacity: 0; transition: opacity .4s;
   }
+  #bar span { margin-right: 2vw; }
+  #bar span:last-child { margin-right: 0; }
   #bar .n { font: 700 5vh/1 Consolas, monospace; color: #3dff5a; }
   #bar .name { font-size: 4.2vh; font-weight: 600; flex: 1; }
   #bar .state { font-size: 2.4vh; color: #ffb84d; }
@@ -33,14 +35,14 @@
 
   /* Senderliste */
   #list {
-    position: fixed; top: 0; bottom: 0; left: 0; width: min(32vw, 460px);
+    position: fixed; top: 0; bottom: 0; left: 0; width: 32vw; max-width: 460px;
     background: rgba(10, 14, 24, .93); overflow-y: auto;
     transform: translateX(-100%); transition: transform .2s;
     padding: 2vh 0; box-sizing: border-box; scrollbar-width: none; touch-action: pan-y;
   }
   #list.open { transform: none; }
-  #list div { padding: 1.3vh 1.6vw; font-size: 2.6vh; display: flex; gap: 1.2vw; cursor: pointer; }
-  #list div b { font-family: Consolas, monospace; color: #3dff5a; width: 2.2em; text-align: right; }
+  #list div { padding: 1.3vh 1.6vw; font-size: 2.6vh; display: flex; cursor: pointer; }
+  #list div b { font-family: Consolas, monospace; color: #3dff5a; width: 2.2em; text-align: right; margin-right: 1.2vw; }
   #list div.sel { background: #2a5bd7; }
   #list div.on::after { content: "●"; color: #3dff5a; margin-left: auto; }
 
@@ -74,11 +76,20 @@
   <kbd>← →</kbd> Lautstärke · <kbd>M</kbd> stumm<br>
   <kbd>Rücktaste</kbd> letzter Sender<br>
   <kbd>F</kbd> / Doppelklick: Vollbild<br>
-  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v4
+  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v5
   <div id="lastkey"></div>
 </div>
 <div id="diag"></div>
 
+<script>
+// Fehlermelder: zeigt jeden Skriptfehler oben links an (bewusst in ganz alter Schreibweise)
+window.onerror = function (msg, src, line, col) {
+  var d = document.getElementById("diag");
+  if (!d) return;
+  d.style.display = "block";
+  d.textContent = (d.textContent ? d.textContent + " || " : "") + "Skriptfehler: " + msg + " (" + String(src).split("/").pop() + ":" + line + ":" + col + ")";
+};
+</script>
 <script src="hls.min.js"></script>
 <script>
 // ───────────── Senderliste: hier Reihenfolge ändern, Sender ergänzen oder streichen ─────────────
@@ -115,7 +126,7 @@ const mem = {
   set(k, x) { try { localStorage.setItem("tv." + k, JSON.stringify(x)); } catch (e) {} },
 };
 
-const VERSION = "4";
+const VERSION = "5";
 let cur = -1, prev = -1, hls = null, sel = 0, digits = "", digitTimer, osdTimer, idleTimer, retryTimer;
 
 // Wiedergabearten: "js" = Abspielbibliothek im Browser, "nativ" und "direkt" = eingebauter Player des Geräts.
@@ -138,11 +149,16 @@ function osd(ms = 3500) {
   osdTimer = setTimeout(() => { num.classList.remove("show"); bar.classList.remove("show"); }, ms);
 }
 
+// Alte Browser liefern bei play() kein Versprechen zurück – deshalb vorsichtig aufrufen
+function tryPlay() {
+  try { const p = v.play(); return p && p.catch ? p : null; } catch (e) { return null; }
+}
 function play() {
-  v.play().catch(() => {
+  const p = tryPlay();
+  if (p) p.catch(() => {
     // Browser erlaubt Ton erst nach einer Eingabe: stumm starten und Hinweis zeigen
     v.muted = true; hint.style.display = "block";
-    v.play().catch(() => {});
+    const q = tryPlay(); if (q) q.catch(() => {});
   });
 }
 
@@ -174,16 +190,18 @@ function start() {
   setState("lädt (" + mode + ") · v" + VERSION); osd(13000);
   if (mode === "js") {
     let recovered = false;
-    hls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 20 });
-    const mine = hls;
-    hls.on(Hls.Events.MANIFEST_PARSED, play);
-    hls.on(Hls.Events.ERROR, (_, d) => {
-      if (!d.fatal || my !== gen) return;
-      if (d.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) { recovered = true; mine.recoverMediaError(); return; }
-      fail(d.type + "/" + d.details);
-    });
-    hls.loadSource(url);
-    hls.attachMedia(v);
+    try {
+      hls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 20 });
+      const mine = hls;
+      hls.on(Hls.Events.MANIFEST_PARSED, play);
+      hls.on(Hls.Events.ERROR, (_, d) => {
+        if (!d.fatal || my !== gen) return;
+        if (d.type === Hls.ErrorTypes.MEDIA_ERROR && !recovered) { recovered = true; mine.recoverMediaError(); return; }
+        fail(d.type + "/" + d.details);
+      });
+      hls.loadSource(url);
+      hls.attachMedia(v);
+    } catch (e) { fail("Absturz: " + e.message); }
   } else {
     v.onerror = () => { if (my === gen) fail("Videofehler " + (v.error ? v.error.code : "?")); };
     if (mode === "nativ") {
@@ -238,22 +256,23 @@ function buildList() {
   SENDER.forEach((s, i) => {
     const d = document.createElement("div");
     const b = document.createElement("b"); b.textContent = i + 1;
-    d.append(b, document.createTextNode(s[0]));
+    d.appendChild(b); d.appendChild(document.createTextNode(s[0]));
     d.onclick = () => { tune(i); toggleList(false); };
-    list.append(d);
+    list.appendChild(d);
   });
 }
 function markList() {
-  [...list.children].forEach((d, i) => {
-    d.classList.toggle("on", i === cur);
-    d.classList.toggle("sel", i === sel);
-  });
+  for (let i = 0; i < list.children.length; i++) {
+    const c = list.children[i].classList;
+    if (i === cur) c.add("on"); else c.remove("on");
+    if (i === sel) c.add("sel"); else c.remove("sel");
+  }
   const el = list.children[sel];
-  if (el && listOpen()) el.scrollIntoView({ block: "nearest" });
+  if (el && listOpen()) { try { el.scrollIntoView({ block: "nearest" }); } catch (e) {} }
 }
 const listOpen = () => list.classList.contains("open");
 function toggleList(on = !listOpen()) {
-  list.classList.toggle("open", on);
+  if (on) list.classList.add("open"); else list.classList.remove("open");
   if (on) { sel = cur; markList(); }
 }
 
@@ -275,11 +294,13 @@ function digit(n) {
 }
 
 function unmuteOnce() {
-  if (hint.style.display === "block") { hint.style.display = "none"; v.muted = false; v.play().catch(() => {}); }
+  if (hint.style.display === "block") { hint.style.display = "none"; v.muted = false; const p = tryPlay(); if (p) p.catch(() => {}); }
 }
 function fullscreen() {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen().catch(() => {});
+  try {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else { const p = document.documentElement.requestFullscreen(); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) {}
 }
 
 // Eine Aktion ausführen – egal ob sie von der Tastatur oder von der TV-Fernbedienung kommt

@@ -74,7 +74,7 @@
   <kbd>← →</kbd> Lautstärke · <kbd>M</kbd> stumm<br>
   <kbd>Rücktaste</kbd> letzter Sender<br>
   <kbd>F</kbd> / Doppelklick: Vollbild<br>
-  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v3
+  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v4
   <div id="lastkey"></div>
 </div>
 <div id="diag"></div>
@@ -115,14 +115,14 @@ const mem = {
   set(k, x) { try { localStorage.setItem("tv." + k, JSON.stringify(x)); } catch (e) {} },
 };
 
-const VERSION = "3";
+const VERSION = "4";
 let cur = -1, prev = -1, hls = null, sel = 0, digits = "", digitTimer, osdTimer, idleTimer, retryTimer;
 
-// Wiedergabearten: "js" = Abspielbibliothek im Browser, "nativ" = eingebauter Player des Geräts.
+// Wiedergabearten: "js" = Abspielbibliothek im Browser, "nativ" und "direkt" = eingebauter Player des Geräts.
 // Klappt eine Art nicht, wird von selbst die andere versucht; die funktionierende wird gemerkt.
 const MODES = [];
 if (window.Hls && Hls.isSupported()) MODES.push("js");
-MODES.push("nativ");
+MODES.push("nativ", "direkt");
 const storedMode = () => { const m = mem.get("mode", MODES[0]); return MODES.indexOf(m) >= 0 ? m : MODES[0]; };
 let mode = storedMode(), savedMode = mem.get("mode", ""), tried = [], lastErr = "", gen = 0, watchdog;
 
@@ -171,6 +171,7 @@ function start() {
   stop();
   const url = SENDER[cur][1], my = gen;
   watchdog = setTimeout(() => { if (my === gen) fail("kein Bild nach 12 s"); }, 12000);
+  setState("lädt (" + mode + ") · v" + VERSION); osd(13000);
   if (mode === "js") {
     let recovered = false;
     hls = new Hls({ liveSyncDurationCount: 3, maxBufferLength: 20 });
@@ -184,11 +185,13 @@ function start() {
     hls.loadSource(url);
     hls.attachMedia(v);
   } else {
-    const s = document.createElement("source");
-    s.src = url; s.type = "application/vnd.apple.mpegurl";
-    s.onerror = () => { if (my === gen) fail("Quelle abgelehnt"); };
     v.onerror = () => { if (my === gen) fail("Videofehler " + (v.error ? v.error.code : "?")); };
-    v.appendChild(s);
+    if (mode === "nativ") {
+      const s = document.createElement("source");
+      s.src = url; s.type = "application/vnd.apple.mpegurl";
+      s.onerror = () => { if (my === gen) fail("Quelle abgelehnt"); };
+      v.appendChild(s);
+    } else v.src = url;
     v.load();
     play();
   }
@@ -225,6 +228,7 @@ v.addEventListener("timeupdate", () => {
   if (!(v.videoWidth > 0 && v.currentTime > 0)) return;
   clearTimeout(watchdog);
   $("diag").style.display = "none";
+  if (bar.querySelector(".state").textContent.indexOf("lädt") === 0) setState("");
   if (savedMode !== mode) { savedMode = mode; mem.set("mode", mode); }
 });
 

@@ -76,7 +76,7 @@
   <kbd>← →</kbd> Lautstärke · <kbd>M</kbd> stumm<br>
   <kbd>Rücktaste</kbd> letzter Sender<br>
   <kbd>F</kbd> / Doppelklick: Vollbild<br>
-  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v8
+  <kbd>I</kbd> Info · <kbd>H</kbd> / Menü-Taste: diese Hilfe · v9
   <div id="lastkey"></div>
 </div>
 <div id="diag"></div>
@@ -126,7 +126,7 @@ const mem = {
   set(k, x) { try { localStorage.setItem("tv." + k, JSON.stringify(x)); } catch (e) {} },
 };
 
-const VERSION = "8";
+const VERSION = "9";
 // Fernseher und TV-Sticks: alles außer Rechner, Handy und Tablet. Dort wird das Bild auf 720p und 4 Mbit/s begrenzt
 // (schwache Prozessoren), die Lautstärke regelt der Fernseher selbst, und es gibt eine Ton-Diagnose.
 const TV = !/Windows|Macintosh|iPhone|iPad|Mobile|CrOS/.test(navigator.userAgent);
@@ -134,11 +134,15 @@ let cur = -1, prev = -1, hls = null, sel = 0, digits = "", digitTimer, osdTimer,
 
 // Wiedergabearten: "js" = Abspielbibliothek im Browser, "nativ" und "direkt" = eingebauter Player des Geräts.
 // Klappt eine Art nicht, wird von selbst die andere versucht; die funktionierende wird gemerkt.
+// Fernseher, die das Sendeformat selbst abspielen können, fangen mit ihrem eingebauten Player an.
+const NATIVE_HLS = v.canPlayType("application/vnd.apple.mpegurl");
 const MODES = [];
+if (TV && NATIVE_HLS) MODES.push("nativ");
 if (window.Hls && Hls.isSupported()) MODES.push("js");
-MODES.push("nativ", "direkt");
-const storedMode = () => { const m = mem.get("mode", MODES[0]); return MODES.indexOf(m) >= 0 ? m : MODES[0]; };
-let mode = storedMode(), savedMode = mem.get("mode", ""), tried = [], lastErr = "", gen = 0, watchdog, notes = {};
+if (MODES.indexOf("nativ") < 0) MODES.push("nativ");
+MODES.push("direkt");
+const storedMode = () => { const m = mem.get("mode9", MODES[0]); return MODES.indexOf(m) >= 0 ? m : MODES[0]; };
+let mode = storedMode(), savedMode = mem.get("mode9", ""), tried = [], lastErr = "", gen = 0, watchdog, notes = {};
 
 function setState(t) { bar.querySelector(".state").textContent = t; }
 
@@ -274,6 +278,10 @@ function tonInfo() {
         " (aktiv " + hls.audioTrack + ") · Stufen " + hls.levels.length + " · Grenze " + hls.autoLevelCapping;
     }
   } catch (e) { s += " · " + e.message; }
+  try {
+    const m = x => (window.MediaSource && MediaSource.isTypeSupported(x) ? "ja" : "nein");
+    s += " · MSE-Ton AAC " + m('audio/mp4; codecs="mp4a.40.2"') + ", gemischt " + m('video/mp4; codecs="avc1.4d401f,mp4a.40.2"') + ", MP3 " + m("audio/mpeg");
+  } catch (e) {}
   try { s += " · Puffer " + v.buffered.length + " · ausgelassene Bilder " + (v.webkitDroppedFrameCount || 0); } catch (e) {}
   return s + " · " + navigator.userAgent;
 }
@@ -287,7 +295,7 @@ v.addEventListener("timeupdate", () => {
   clearTimeout(watchdog);
   $("diag").style.display = "none";
   if (bar.querySelector(".state").textContent.indexOf("lädt") === 0) setState("");
-  if (savedMode !== mode) { savedMode = mode; mem.set("mode", mode); }
+  if (savedMode !== mode) { savedMode = mode; mem.set("mode9", mode); }
   if (TV) {
     v.muted = false; v.volume = 1;
     clearTimeout(tonTimer);

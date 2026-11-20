@@ -1,0 +1,56 @@
+name: Bauen
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  bauen:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Player und Abspielbibliothek bereitlegen
+        run: |
+          npm pack hls.js@1.7.4
+          tar -xzf hls.js-1.7.4.tgz package/dist/hls.min.js
+          mkdir -p app/src/main/assets site
+          cp index.html package/dist/hls.min.js app/src/main/assets/
+          cp index.html package/dist/hls.min.js site/
+          cp index.html "site/v$(grep -o 'VERSION = "[0-9]*"' index.html | grep -o '[0-9]*').html"
+          base64 -d debug.keystore.b64 > app/debug.keystore
+      - name: App bauen
+        run: gradle assembleDebug --no-daemon
+      - run: cp app/build/outputs/apk/debug/app-debug.apk site/tv.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kabelfernsehen-apk
+          path: site/tv.apk
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  veroeffentlichen:
+    needs: bauen
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

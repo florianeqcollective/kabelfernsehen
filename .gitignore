@@ -1,0 +1,8 @@
+app/debug.keystore
+app/src/main/assets/
+app/build/
+build/
+.gradle/
+site/
+package/
+*.tgz
